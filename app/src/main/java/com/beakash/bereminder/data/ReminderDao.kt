@@ -6,6 +6,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ReminderDao {
@@ -20,5 +21,5 @@ interface ReminderDao {
     suspend fun deleteReminder(reminder: ReminderEntity)
 
     @Query("SELECT * FROM reminders ORDER BY id DESC")
-    suspend fun getAllReminders(): List<ReminderEntity>
+    fun observeAllReminders(): Flow<List<ReminderEntity>>
 }

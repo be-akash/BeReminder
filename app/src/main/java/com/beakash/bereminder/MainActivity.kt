@@ -9,33 +9,14 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -45,6 +26,7 @@ import com.beakash.bereminder.alarm.AlarmScheduler
 import com.beakash.bereminder.data.ReminderDatabase
 import com.beakash.bereminder.data.ReminderRepository
 import com.beakash.bereminder.model.Reminder
+import com.beakash.bereminder.model.RepeatEndMode
 import com.beakash.bereminder.ui.ReminderFormState
 import com.beakash.bereminder.ui.viewmodel.ReminderViewModel
 import com.beakash.bereminder.ui.viewmodel.ReminderViewModelFactory
@@ -60,52 +42,41 @@ class MainActivity : ComponentActivity() {
         }
 
         val database = ReminderDatabase.getDatabase(this)
-        val reminderDao = database.reminderDao()
-        val repository = ReminderRepository(reminderDao)
+        val repository = ReminderRepository(database.reminderDao())
 
         setContent {
-            val reminderViewModel: ReminderViewModel = viewModel(
+            val viewModel: ReminderViewModel = viewModel(
                 factory = ReminderViewModelFactory(repository)
             )
 
             val scheduler = AlarmScheduler(this)
 
-            androidx.compose.runtime.LaunchedEffect(Unit) {
-                reminderViewModel.loadReminders {
-                    reminderViewModel.rescheduleEnabledReminders(scheduler)
-                }
+            LaunchedEffect(Unit) {
+                viewModel.rescheduleEnabledReminders(scheduler)
             }
 
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     ReminderFormScreen(
                         exactAlarmAllowed = scheduler.canScheduleExactAlarms(),
-                        reminders = reminderViewModel.reminders,
-                        onRequestExactAlarmAccess = {
-                            openExactAlarmSettings()
+                        reminders = viewModel.reminders,
+                        onRequestExactAlarmAccess = { openExactAlarmSettings() },
+                        onScheduleReminder = {
+                            viewModel.createReminder(it)
+                            scheduler.scheduleReminderAfterFiveSeconds(it)
+                            Toast.makeText(this, "Reminder saved", Toast.LENGTH_SHORT).show()
                         },
-                        onScheduleReminder = { reminder ->
-                            reminderViewModel.createReminder(reminder)
-                            scheduler.scheduleReminderAfterFiveSeconds(reminder)
-
-                            Toast.makeText(
-                                this,
-                                "Reminder saved and scheduled",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        },
-                        onToggleReminder = { updatedReminder ->
-                            reminderViewModel.toggleReminder(updatedReminder)
-
-                            if (!updatedReminder.isEnabled) {
-                                scheduler.cancelReminder(updatedReminder.id)
+                        onToggleReminder = {
+                            viewModel.toggleReminder(it)
+                            if (it.isEnabled) {
+                                scheduler.scheduleReminderAfterFiveSeconds(it)
                             } else {
-                                scheduler.scheduleReminderAfterFiveSeconds(updatedReminder)
+                                scheduler.cancelReminder(it.id)
                             }
                         },
-                        onDeleteReminder = { reminderToDelete ->
-                            reminderViewModel.deleteReminder(reminderToDelete)
-                            scheduler.cancelReminder(reminderToDelete.id)
+                        onDeleteReminder = {
+                            viewModel.deleteReminder(it)
+                            scheduler.cancelReminder(it.id)
                         }
                     )
                 }
@@ -115,8 +86,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openExactAlarmSettings() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-            startActivity(intent)
+            startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM))
         }
     }
 }
@@ -136,86 +106,137 @@ fun ReminderFormScreen(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(24.dp)
     ) {
+
         item {
             Text(
-                text = if (exactAlarmAllowed) {
-                    "Exact alarm access: Allowed"
-                } else {
-                    "Exact alarm access: Not allowed"
-                },
-                modifier = Modifier.padding(top = 16.dp)
+                text = if (exactAlarmAllowed) "Exact alarm allowed"
+                else "Exact alarm NOT allowed"
             )
         }
 
         item {
             Button(
                 onClick = onRequestExactAlarmAccess,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
             ) {
-                Text("Open Exact Alarm Settings")
+                Text("Grant Exact Alarm Permission")
             }
         }
 
         item {
             OutlinedTextField(
                 value = formState.title,
-                onValueChange = {
-                    formState = formState.copy(
-                        title = it,
-                        errorMessage = null
-                    )
-                },
-                label = { Text("Reminder Title") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp)
+                onValueChange = { formState = formState.copy(title = it, errorMessage = null) },
+                label = { Text("Title") },
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
             )
         }
 
         item {
             OutlinedTextField(
                 value = formState.message,
-                onValueChange = {
-                    formState = formState.copy(
-                        message = it,
-                        errorMessage = null
-                    )
-                },
-                label = { Text("Reminder Message") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp)
+                onValueChange = { formState = formState.copy(message = it, errorMessage = null) },
+                label = { Text("Message") },
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
             )
         }
 
         item {
             OutlinedTextField(
                 value = formState.intervalText,
-                onValueChange = {
-                    formState = formState.copy(
-                        intervalText = it,
-                        errorMessage = null
-                    )
-                },
-                label = { Text("Interval Hours") },
+                onValueChange = { formState = formState.copy(intervalText = it, errorMessage = null) },
+                label = { Text("Interval (hours)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
             )
+        }
+
+        // Repeat Mode
+        item {
+            Text("Repeat Ends", modifier = Modifier.padding(top = 20.dp))
+        }
+
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(
+                    selected = formState.repeatEndMode == RepeatEndMode.NEVER,
+                    onClick = {
+                        formState = formState.copy(
+                            repeatEndMode = RepeatEndMode.NEVER,
+                            maxOccurrencesText = "",
+                            untilDateTimeMillis = null
+                        )
+                    }
+                )
+                Text("Never")
+            }
+        }
+
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(
+                    selected = formState.repeatEndMode == RepeatEndMode.AFTER_COUNT,
+                    onClick = {
+                        formState = formState.copy(
+                            repeatEndMode = RepeatEndMode.AFTER_COUNT,
+                            untilDateTimeMillis = null
+                        )
+                    }
+                )
+                Text("After Count")
+            }
+        }
+
+        if (formState.repeatEndMode == RepeatEndMode.AFTER_COUNT) {
+            item {
+                OutlinedTextField(
+                    value = formState.maxOccurrencesText,
+                    onValueChange = {
+                        formState = formState.copy(maxOccurrencesText = it)
+                    },
+                    label = { Text("Max Occurrences") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(
+                    selected = formState.repeatEndMode == RepeatEndMode.UNTIL_DATE,
+                    onClick = {
+                        formState = formState.copy(
+                            repeatEndMode = RepeatEndMode.UNTIL_DATE,
+                            maxOccurrencesText = ""
+                        )
+                    }
+                )
+                Text("Until Date (millis)")
+            }
+        }
+
+        if (formState.repeatEndMode == RepeatEndMode.UNTIL_DATE) {
+            item {
+                OutlinedTextField(
+                    value = formState.untilDateTimeMillis?.toString() ?: "",
+                    onValueChange = {
+                        formState = formState.copy(untilDateTimeMillis = it.toLongOrNull())
+                    },
+                    label = { Text("Millis") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         if (formState.errorMessage != null) {
             item {
                 Text(
                     text = formState.errorMessage!!,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 16.dp)
+                    color = MaterialTheme.colorScheme.error
                 )
             }
         }
@@ -223,36 +244,31 @@ fun ReminderFormScreen(
         item {
             Button(
                 onClick = {
-                    val intervalHours = formState.intervalText.toIntOrNull()
+                    val interval = formState.intervalText.toIntOrNull()
+                    val max = formState.maxOccurrencesText.toIntOrNull()
 
                     when {
-                        formState.title.isBlank() -> {
-                            formState = formState.copy(
-                                errorMessage = "Title cannot be empty"
-                            )
-                        }
-                        formState.message.isBlank() -> {
-                            formState = formState.copy(
-                                errorMessage = "Message cannot be empty"
-                            )
-                        }
-                        intervalHours == null -> {
-                            formState = formState.copy(
-                                errorMessage = "Interval must be a number"
-                            )
-                        }
-                        intervalHours <= 0 -> {
-                            formState = formState.copy(
-                                errorMessage = "Interval must be greater than 0"
-                            )
-                        }
+                        formState.title.isBlank() -> formState = formState.copy(errorMessage = "Title required")
+                        formState.message.isBlank() -> formState = formState.copy(errorMessage = "Message required")
+                        interval == null || interval <= 0 -> formState = formState.copy(errorMessage = "Invalid interval")
+
+                        formState.repeatEndMode == RepeatEndMode.AFTER_COUNT && (max == null || max <= 0) ->
+                            formState = formState.copy(errorMessage = "Invalid max count")
+
+                        formState.repeatEndMode == RepeatEndMode.UNTIL_DATE && formState.untilDateTimeMillis == null ->
+                            formState = formState.copy(errorMessage = "Date required")
+
                         else -> {
                             val reminder = Reminder(
                                 id = System.currentTimeMillis().toInt(),
-                                title = formState.title.trim(),
-                                message = formState.message.trim(),
-                                intervalHours = intervalHours,
-                                isEnabled = true
+                                title = formState.title,
+                                message = formState.message,
+                                intervalHours = interval,
+                                isEnabled = true,
+                                repeatEndMode = formState.repeatEndMode,
+                                maxOccurrences = if (formState.repeatEndMode == RepeatEndMode.AFTER_COUNT) max else null,
+                                untilDateTimeMillis = if (formState.repeatEndMode == RepeatEndMode.UNTIL_DATE) formState.untilDateTimeMillis else null,
+                                currentOccurrences = 0
                             )
 
                             onScheduleReminder(reminder)
@@ -260,39 +276,21 @@ fun ReminderFormScreen(
                         }
                     }
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
             ) {
                 Text("Create Reminder")
             }
         }
 
         item {
-            Text(
-                text = "Created Reminders",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp)
-            )
+            Text("Reminders", modifier = Modifier.padding(top = 24.dp))
         }
 
         items(reminders) { reminder ->
-            ReminderItem(
-                reminder = reminder,
-                onToggleEnabled = { updatedReminder ->
-                    onToggleReminder(updatedReminder)
-                },
-                onDelete = { reminderToDelete ->
-                    onDeleteReminder(reminderToDelete)
-                }
-            )
+            ReminderItem(reminder, onToggleReminder, onDeleteReminder)
         }
 
-        item {
-            Spacer(modifier = Modifier.height(24.dp))
-        }
+        item { Spacer(modifier = Modifier.height(50.dp)) }
     }
 }
 
@@ -302,60 +300,53 @@ fun ReminderItem(
     onToggleEnabled: (Reminder) -> Unit,
     onDelete: (Reminder) -> Unit
 ) {
+    val endText = when (reminder.repeatEndMode) {
+        RepeatEndMode.NEVER -> "Ends: Never"
+
+        RepeatEndMode.AFTER_COUNT -> {
+            if (reminder.maxOccurrences != null)
+                "Ends after ${reminder.maxOccurrences} times"
+            else "Ends after -"
+        }
+
+        RepeatEndMode.UNTIL_DATE -> {
+            if (reminder.untilDateTimeMillis != null)
+                "Ends at ${reminder.untilDateTimeMillis}"
+            else "Ends at -"
+        }
+    }
+
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
         tonalElevation = 2.dp
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = reminder.title,
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Text(reminder.title)
 
-                IconButton(
-                    onClick = { onDelete(reminder) }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete reminder"
-                    )
+                IconButton(onClick = { onDelete(reminder) }) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete")
                 }
             }
 
-            Text(
-                text = reminder.message,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-
-            Text(
-                text = "Every ${reminder.intervalHours} hour(s)",
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Text(reminder.message)
+            Text("Every ${reminder.intervalHours} hour(s)")
+            Text(endText)
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = if (reminder.isEnabled) "Enabled" else "Disabled"
-                )
+                Text(if (reminder.isEnabled) "Enabled" else "Disabled")
 
                 Switch(
                     checked = reminder.isEnabled,
-                    onCheckedChange = { isChecked ->
-                        onToggleEnabled(reminder.copy(isEnabled = isChecked))
+                    onCheckedChange = {
+                        onToggleEnabled(reminder.copy(isEnabled = it))
                     }
                 )
             }

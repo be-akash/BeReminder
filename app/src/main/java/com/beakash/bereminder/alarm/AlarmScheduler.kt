@@ -31,6 +31,10 @@ class AlarmScheduler(private val context: Context) {
             putExtra("message", reminder.message)
             putExtra("intervalHours", reminder.intervalHours)
             putExtra("isEnabled", reminder.isEnabled)
+            putExtra("repeatEndMode", reminder.repeatEndMode.name)
+            putExtra("maxOccurrences", reminder.maxOccurrences)
+            putExtra("untilDateTimeMillis", reminder.untilDateTimeMillis)
+            putExtra("currentOccurrences", reminder.currentOccurrences)
         }
 
         val pendingIntent = PendingIntent.getBroadcast(

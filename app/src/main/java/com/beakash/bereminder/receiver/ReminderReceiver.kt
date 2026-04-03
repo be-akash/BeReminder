@@ -9,7 +9,13 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.beakash.bereminder.R
 import com.beakash.bereminder.alarm.AlarmScheduler
+import com.beakash.bereminder.data.ReminderDatabase
+import com.beakash.bereminder.data.ReminderRepository
 import com.beakash.bereminder.model.Reminder
+import com.beakash.bereminder.model.RepeatEndMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class ReminderReceiver : BroadcastReceiver() {
 
@@ -19,12 +25,34 @@ class ReminderReceiver : BroadcastReceiver() {
         val intervalHours = intent.getIntExtra("intervalHours", 1)
         val isEnabled = intent.getBooleanExtra("isEnabled", true)
 
-        val reminder = Reminder(
+        val repeatEndModeName = intent.getStringExtra("repeatEndMode") ?: RepeatEndMode.NEVER.name
+        val repeatEndMode = RepeatEndMode.valueOf(repeatEndModeName)
+
+        val maxOccurrences = if (intent.hasExtra("maxOccurrences")) {
+            intent.getIntExtra("maxOccurrences", 0)
+        } else {
+            null
+        }
+
+        val untilDateTimeMillis = if (intent.hasExtra("untilDateTimeMillis")) {
+            intent.getLongExtra("untilDateTimeMillis", 0L)
+        } else {
+            null
+        }
+
+        val currentOccurrences = intent.getIntExtra("currentOccurrences", 0)
+        val newOccurrences = currentOccurrences + 1
+
+        var updatedReminder = Reminder(
             id = intent.getIntExtra("id", 1),
             title = title,
             message = message,
             intervalHours = intervalHours,
-            isEnabled = isEnabled
+            isEnabled = isEnabled,
+            repeatEndMode = repeatEndMode,
+            maxOccurrences = maxOccurrences,
+            untilDateTimeMillis = untilDateTimeMillis,
+            currentOccurrences = newOccurrences
         )
 
         val notificationManager =
@@ -43,23 +71,56 @@ class ReminderReceiver : BroadcastReceiver() {
 
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(reminder.title)
-            .setContentText("${reminder.message} (Repeats every ${reminder.intervalHours} hour(s))")
+            .setContentTitle(updatedReminder.title)
+            .setContentText(updatedReminder.message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .build()
 
-        notificationManager.notify(reminder.id, notification)
+        notificationManager.notify(updatedReminder.id, notification)
 
-        if (reminder.isEnabled) {
-            val nextTriggerAtMillis =
-                System.currentTimeMillis() + reminder.intervalHours * 60L * 1000L
-            // change back to * 60L * 60L * 1000L for real hourly behavior later
+        if (!updatedReminder.isEnabled) {
+            persistReminder(context, updatedReminder)
+            return
+        }
 
-            AlarmScheduler(context).scheduleReminderAtTime(
-                reminder = reminder,
-                triggerAtMillis = nextTriggerAtMillis
-            )
+        val nextTriggerAtMillis =
+            System.currentTimeMillis() + updatedReminder.intervalHours * 60L * 1000L
+
+        val shouldContinue = when (updatedReminder.repeatEndMode) {
+            RepeatEndMode.NEVER -> true
+
+            RepeatEndMode.AFTER_COUNT -> {
+                val max = updatedReminder.maxOccurrences ?: 0
+                updatedReminder.currentOccurrences < max
+            }
+
+            RepeatEndMode.UNTIL_DATE -> {
+                val until = updatedReminder.untilDateTimeMillis ?: 0L
+                nextTriggerAtMillis <= until
+            }
+        }
+
+        if (!shouldContinue) {
+            updatedReminder = updatedReminder.copy(isEnabled = false)
+            persistReminder(context, updatedReminder)
+            return
+        }
+
+        persistReminder(context, updatedReminder)
+
+        AlarmScheduler(context).scheduleReminderAtTime(
+            reminder = updatedReminder,
+            triggerAtMillis = nextTriggerAtMillis
+        )
+    }
+
+    private fun persistReminder(context: Context, reminder: Reminder) {
+        val database = ReminderDatabase.getDatabase(context)
+        val repository = ReminderRepository(database.reminderDao())
+
+        CoroutineScope(Dispatchers.IO).launch {
+            repository.updateReminder(reminder)
         }
     }
 }

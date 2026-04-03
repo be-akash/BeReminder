@@ -9,5 +9,9 @@ data class ReminderEntity(
     val title: String,
     val message: String,
     val intervalHours: Int,
-    val isEnabled: Boolean
+    val isEnabled: Boolean,
+    val repeatEndMode: String,
+    val maxOccurrences: Int?,
+    val untilDateTimeMillis: Long?,
+    val currentOccurrences: Int
 )

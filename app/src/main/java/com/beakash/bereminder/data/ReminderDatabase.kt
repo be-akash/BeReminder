@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [ReminderEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class ReminderDatabase : RoomDatabase() {
@@ -24,7 +24,9 @@ abstract class ReminderDatabase : RoomDatabase() {
                     context.applicationContext,
                     ReminderDatabase::class.java,
                     "reminder_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
 
                 INSTANCE = instance
                 instance
