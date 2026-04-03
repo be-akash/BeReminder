@@ -32,26 +32,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.beakash.bereminder.alarm.AlarmScheduler
-import com.beakash.bereminder.data.toEntity
-import com.beakash.bereminder.data.toReminder
-import com.beakash.bereminder.model.Reminder
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beakash.bereminder.alarm.AlarmScheduler
 import com.beakash.bereminder.data.ReminderDatabase
+import com.beakash.bereminder.data.ReminderRepository
+import com.beakash.bereminder.model.Reminder
+import com.beakash.bereminder.ui.ReminderFormState
 import com.beakash.bereminder.ui.viewmodel.ReminderViewModel
 import com.beakash.bereminder.ui.viewmodel.ReminderViewModelFactory
 
@@ -67,17 +61,18 @@ class MainActivity : ComponentActivity() {
 
         val database = ReminderDatabase.getDatabase(this)
         val reminderDao = database.reminderDao()
+        val repository = ReminderRepository(reminderDao)
 
         setContent {
-            val viewModel: ReminderViewModel = viewModel(
-                factory = ReminderViewModelFactory(reminderDao)
+            val reminderViewModel: ReminderViewModel = viewModel(
+                factory = ReminderViewModelFactory(repository)
             )
 
             val scheduler = AlarmScheduler(this)
 
             androidx.compose.runtime.LaunchedEffect(Unit) {
-                viewModel.loadReminders {
-                    viewModel.rescheduleEnabledReminders(scheduler)
+                reminderViewModel.loadReminders {
+                    reminderViewModel.rescheduleEnabledReminders(scheduler)
                 }
             }
 
@@ -85,12 +80,12 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     ReminderFormScreen(
                         exactAlarmAllowed = scheduler.canScheduleExactAlarms(),
-                        reminders = viewModel.reminders,
+                        reminders = reminderViewModel.reminders,
                         onRequestExactAlarmAccess = {
                             openExactAlarmSettings()
                         },
                         onScheduleReminder = { reminder ->
-                            viewModel.addReminder(reminder)
+                            reminderViewModel.createReminder(reminder)
                             scheduler.scheduleReminderAfterFiveSeconds(reminder)
 
                             Toast.makeText(
@@ -100,7 +95,7 @@ class MainActivity : ComponentActivity() {
                             ).show()
                         },
                         onToggleReminder = { updatedReminder ->
-                            viewModel.updateReminder(updatedReminder)
+                            reminderViewModel.toggleReminder(updatedReminder)
 
                             if (!updatedReminder.isEnabled) {
                                 scheduler.cancelReminder(updatedReminder.id)
@@ -109,7 +104,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDeleteReminder = { reminderToDelete ->
-                            viewModel.deleteReminder(reminderToDelete)
+                            reminderViewModel.deleteReminder(reminderToDelete)
                             scheduler.cancelReminder(reminderToDelete.id)
                         }
                     )
@@ -135,10 +130,7 @@ fun ReminderFormScreen(
     onToggleReminder: (Reminder) -> Unit,
     onDeleteReminder: (Reminder) -> Unit
 ) {
-    var title by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf("") }
-    var intervalText by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var formState by remember { mutableStateOf(ReminderFormState()) }
 
     LazyColumn(
         modifier = Modifier
@@ -171,10 +163,12 @@ fun ReminderFormScreen(
 
         item {
             OutlinedTextField(
-                value = title,
+                value = formState.title,
                 onValueChange = {
-                    title = it
-                    errorMessage = null
+                    formState = formState.copy(
+                        title = it,
+                        errorMessage = null
+                    )
                 },
                 label = { Text("Reminder Title") },
                 modifier = Modifier
@@ -185,10 +179,12 @@ fun ReminderFormScreen(
 
         item {
             OutlinedTextField(
-                value = message,
+                value = formState.message,
                 onValueChange = {
-                    message = it
-                    errorMessage = null
+                    formState = formState.copy(
+                        message = it,
+                        errorMessage = null
+                    )
                 },
                 label = { Text("Reminder Message") },
                 modifier = Modifier
@@ -199,10 +195,12 @@ fun ReminderFormScreen(
 
         item {
             OutlinedTextField(
-                value = intervalText,
+                value = formState.intervalText,
                 onValueChange = {
-                    intervalText = it
-                    errorMessage = null
+                    formState = formState.copy(
+                        intervalText = it,
+                        errorMessage = null
+                    )
                 },
                 label = { Text("Interval Hours") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -212,10 +210,10 @@ fun ReminderFormScreen(
             )
         }
 
-        if (errorMessage != null) {
+        if (formState.errorMessage != null) {
             item {
                 Text(
-                    text = errorMessage!!,
+                    text = formState.errorMessage!!,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(top = 16.dp)
                 )
@@ -225,37 +223,40 @@ fun ReminderFormScreen(
         item {
             Button(
                 onClick = {
-                    val intervalHours = intervalText.toIntOrNull()
+                    val intervalHours = formState.intervalText.toIntOrNull()
 
                     when {
-                        title.isBlank() -> {
-                            errorMessage = "Title cannot be empty"
+                        formState.title.isBlank() -> {
+                            formState = formState.copy(
+                                errorMessage = "Title cannot be empty"
+                            )
                         }
-                        message.isBlank() -> {
-                            errorMessage = "Message cannot be empty"
+                        formState.message.isBlank() -> {
+                            formState = formState.copy(
+                                errorMessage = "Message cannot be empty"
+                            )
                         }
                         intervalHours == null -> {
-                            errorMessage = "Interval must be a number"
+                            formState = formState.copy(
+                                errorMessage = "Interval must be a number"
+                            )
                         }
                         intervalHours <= 0 -> {
-                            errorMessage = "Interval must be greater than 0"
+                            formState = formState.copy(
+                                errorMessage = "Interval must be greater than 0"
+                            )
                         }
                         else -> {
-                            errorMessage = null
-
                             val reminder = Reminder(
                                 id = System.currentTimeMillis().toInt(),
-                                title = title.trim(),
-                                message = message.trim(),
+                                title = formState.title.trim(),
+                                message = formState.message.trim(),
                                 intervalHours = intervalHours,
                                 isEnabled = true
                             )
 
                             onScheduleReminder(reminder)
-
-                            title = ""
-                            message = ""
-                            intervalText = ""
+                            formState = ReminderFormState()
                         }
                     }
                 },

@@ -4,25 +4,19 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.beakash.bereminder.alarm.AlarmScheduler
-import com.beakash.bereminder.data.ReminderDao
-import com.beakash.bereminder.data.toEntity
-import com.beakash.bereminder.data.toReminder
+import com.beakash.bereminder.data.ReminderRepository
 import com.beakash.bereminder.model.Reminder
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class ReminderViewModel(
-    private val reminderDao: ReminderDao
+    private val repository: ReminderRepository
 ) : ViewModel() {
 
     val reminders = mutableStateListOf<Reminder>()
 
     fun loadReminders(onLoaded: ((List<Reminder>) -> Unit)? = null) {
         viewModelScope.launch {
-            val savedReminders = withContext(Dispatchers.IO) {
-                reminderDao.getAllReminders().map { it.toReminder() }
-            }
+            val savedReminders = repository.getAllReminders()
 
             reminders.clear()
             reminders.addAll(savedReminders)
@@ -30,30 +24,30 @@ class ReminderViewModel(
         }
     }
 
-    fun addReminder(reminder: Reminder) {
+    fun createReminder(reminder: Reminder) {
         reminders.add(reminder)
 
-        viewModelScope.launch(Dispatchers.IO) {
-            reminderDao.insertReminder(reminder.toEntity())
+        viewModelScope.launch {
+            repository.insertReminder(reminder)
         }
     }
 
-    fun updateReminder(reminder: Reminder) {
-        val index = reminders.indexOfFirst { it.id == reminder.id }
+    fun toggleReminder(updatedReminder: Reminder) {
+        val index = reminders.indexOfFirst { it.id == updatedReminder.id }
         if (index != -1) {
-            reminders[index] = reminder
+            reminders[index] = updatedReminder
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
-            reminderDao.updateReminder(reminder.toEntity())
+        viewModelScope.launch {
+            repository.updateReminder(updatedReminder)
         }
     }
 
     fun deleteReminder(reminder: Reminder) {
         reminders.removeAll { it.id == reminder.id }
 
-        viewModelScope.launch(Dispatchers.IO) {
-            reminderDao.deleteReminder(reminder.toEntity())
+        viewModelScope.launch {
+            repository.deleteReminder(reminder)
         }
     }
 
