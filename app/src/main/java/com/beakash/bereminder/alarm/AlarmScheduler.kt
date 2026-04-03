@@ -59,4 +59,18 @@ class AlarmScheduler(private val context: Context) {
         val triggerAtMillis = System.currentTimeMillis() + 5000L
         scheduleReminderAtTime(reminder, triggerAtMillis)
     }
+
+    fun cancelReminder(reminderId: Int) {
+        val intent = Intent(context, ReminderReceiver::class.java)
+
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            reminderId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        alarmManager.cancel(pendingIntent)
+        pendingIntent.cancel()
+    }
 }
