@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.beakash.bereminder.model.Reminder
 import com.beakash.bereminder.receiver.ReminderReceiver
 
 class AlarmScheduler(private val context: Context) {
@@ -20,20 +21,24 @@ class AlarmScheduler(private val context: Context) {
         }
     }
 
-    fun scheduleAfterFiveSecondsExact() {
+    fun scheduleReminderAtTime(
+        reminder: Reminder,
+        triggerAtMillis: Long
+    ) {
         val intent = Intent(context, ReminderReceiver::class.java).apply {
-            putExtra("title", "Medicine Reminder")
-            putExtra("message", "Time to take medicine")
+            putExtra("id", reminder.id)
+            putExtra("title", reminder.title)
+            putExtra("message", reminder.message)
+            putExtra("intervalHours", reminder.intervalHours)
+            putExtra("isEnabled", reminder.isEnabled)
         }
 
         val pendingIntent = PendingIntent.getBroadcast(
             context,
-            1001,
+            reminder.id,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        val triggerAtMillis = System.currentTimeMillis() + 5000L
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && canScheduleExactAlarms()) {
             alarmManager.setExactAndAllowWhileIdle(
@@ -48,5 +53,10 @@ class AlarmScheduler(private val context: Context) {
                 pendingIntent
             )
         }
+    }
+
+    fun scheduleReminderAfterFiveSeconds(reminder: Reminder) {
+        val triggerAtMillis = System.currentTimeMillis() + 5000L
+        scheduleReminderAtTime(reminder, triggerAtMillis)
     }
 }

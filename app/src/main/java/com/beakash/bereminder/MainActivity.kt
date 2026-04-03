@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.beakash.bereminder.alarm.AlarmScheduler
+import com.beakash.bereminder.model.Reminder
 
 class MainActivity : ComponentActivity() {
 
@@ -40,7 +41,14 @@ class MainActivity : ComponentActivity() {
                             openExactAlarmSettings()
                         },
                         onScheduleClick = {
-                            AlarmScheduler(this).scheduleAfterFiveSecondsExact()
+                            val reminder = Reminder(
+                                id = 1,
+                                title = "Medicine Reminder",
+                                message = "Time to take medicine",
+                                intervalHours = 1
+                            )
+
+                            AlarmScheduler(this).scheduleReminderAfterFiveSeconds(reminder)
                         },
                         exactAlarmAllowed = AlarmScheduler(this).canScheduleExactAlarms()
                     )
