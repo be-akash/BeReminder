@@ -43,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.beakash.bereminder.alarm.AlarmScheduler
-import com.beakash.bereminder.data.ReminderDatabase
 import com.beakash.bereminder.data.toEntity
 import com.beakash.bereminder.data.toReminder
 import com.beakash.bereminder.model.Reminder
@@ -51,6 +50,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beakash.bereminder.data.ReminderDatabase
+import com.beakash.bereminder.ui.viewmodel.ReminderViewModel
+import com.beakash.bereminder.ui.viewmodel.ReminderViewModelFactory
 
 class MainActivity : ComponentActivity() {
 
@@ -66,40 +69,29 @@ class MainActivity : ComponentActivity() {
         val reminderDao = database.reminderDao()
 
         setContent {
-            val reminders = remember { mutableStateListOf<Reminder>() }
+            val viewModel: ReminderViewModel = viewModel(
+                factory = ReminderViewModelFactory(reminderDao)
+            )
 
-            LaunchedEffect(Unit) {
-                val savedReminders = withContext(Dispatchers.IO) {
-                    reminderDao.getAllReminders().map { it.toReminder() }
-                }
+            val scheduler = AlarmScheduler(this)
 
-                reminders.clear()
-                reminders.addAll(savedReminders)
-
-                val scheduler = AlarmScheduler(this@MainActivity)
-
-                savedReminders.forEach { reminder ->
-                    if (reminder.isEnabled) {
-                        scheduler.scheduleReminderAfterFiveSeconds(reminder)
-                    }
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                viewModel.loadReminders {
+                    viewModel.rescheduleEnabledReminders(scheduler)
                 }
             }
 
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     ReminderFormScreen(
-                        exactAlarmAllowed = AlarmScheduler(this).canScheduleExactAlarms(),
-                        reminders = reminders,
+                        exactAlarmAllowed = scheduler.canScheduleExactAlarms(),
+                        reminders = viewModel.reminders,
                         onRequestExactAlarmAccess = {
                             openExactAlarmSettings()
                         },
                         onScheduleReminder = { reminder ->
-                            CoroutineScope(Dispatchers.IO).launch {
-                                reminderDao.insertReminder(reminder.toEntity())
-                            }
-
-                            reminders.add(reminder)
-                            AlarmScheduler(this).scheduleReminderAfterFiveSeconds(reminder)
+                            viewModel.addReminder(reminder)
+                            scheduler.scheduleReminderAfterFiveSeconds(reminder)
 
                             Toast.makeText(
                                 this,
@@ -108,16 +100,8 @@ class MainActivity : ComponentActivity() {
                             ).show()
                         },
                         onToggleReminder = { updatedReminder ->
-                            val index = reminders.indexOfFirst { it.id == updatedReminder.id }
-                            if (index != -1) {
-                                reminders[index] = updatedReminder
-                            }
+                            viewModel.updateReminder(updatedReminder)
 
-                            CoroutineScope(Dispatchers.IO).launch {
-                                reminderDao.updateReminder(updatedReminder.toEntity())
-                            }
-
-                            val scheduler = AlarmScheduler(this)
                             if (!updatedReminder.isEnabled) {
                                 scheduler.cancelReminder(updatedReminder.id)
                             } else {
@@ -125,13 +109,8 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDeleteReminder = { reminderToDelete ->
-                            reminders.removeAll { it.id == reminderToDelete.id }
-
-                            CoroutineScope(Dispatchers.IO).launch {
-                                reminderDao.deleteReminder(reminderToDelete.toEntity())
-                            }
-
-                            AlarmScheduler(this).cancelReminder(reminderToDelete.id)
+                            viewModel.deleteReminder(reminderToDelete)
+                            scheduler.cancelReminder(reminderToDelete.id)
                         }
                     )
                 }
