@@ -32,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,11 +40,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.beakash.bereminder.alarm.AlarmScheduler
+import com.beakash.bereminder.data.ReminderDatabase
+import com.beakash.bereminder.data.toEntity
+import com.beakash.bereminder.data.toReminder
 import com.beakash.bereminder.model.Reminder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -55,21 +62,76 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
         }
 
+        val database = ReminderDatabase.getDatabase(this)
+        val reminderDao = database.reminderDao()
+
         setContent {
+            val reminders = remember { mutableStateListOf<Reminder>() }
+
+            LaunchedEffect(Unit) {
+                val savedReminders = withContext(Dispatchers.IO) {
+                    reminderDao.getAllReminders().map { it.toReminder() }
+                }
+
+                reminders.clear()
+                reminders.addAll(savedReminders)
+
+                val scheduler = AlarmScheduler(this@MainActivity)
+
+                savedReminders.forEach { reminder ->
+                    if (reminder.isEnabled) {
+                        scheduler.scheduleReminderAfterFiveSeconds(reminder)
+                    }
+                }
+            }
+
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     ReminderFormScreen(
                         exactAlarmAllowed = AlarmScheduler(this).canScheduleExactAlarms(),
+                        reminders = reminders,
                         onRequestExactAlarmAccess = {
                             openExactAlarmSettings()
                         },
                         onScheduleReminder = { reminder ->
+                            CoroutineScope(Dispatchers.IO).launch {
+                                reminderDao.insertReminder(reminder.toEntity())
+                            }
+
+                            reminders.add(reminder)
                             AlarmScheduler(this).scheduleReminderAfterFiveSeconds(reminder)
+
                             Toast.makeText(
                                 this,
-                                "Reminder scheduled in 5 seconds",
+                                "Reminder saved and scheduled",
                                 Toast.LENGTH_SHORT
                             ).show()
+                        },
+                        onToggleReminder = { updatedReminder ->
+                            val index = reminders.indexOfFirst { it.id == updatedReminder.id }
+                            if (index != -1) {
+                                reminders[index] = updatedReminder
+                            }
+
+                            CoroutineScope(Dispatchers.IO).launch {
+                                reminderDao.updateReminder(updatedReminder.toEntity())
+                            }
+
+                            val scheduler = AlarmScheduler(this)
+                            if (!updatedReminder.isEnabled) {
+                                scheduler.cancelReminder(updatedReminder.id)
+                            } else {
+                                scheduler.scheduleReminderAfterFiveSeconds(updatedReminder)
+                            }
+                        },
+                        onDeleteReminder = { reminderToDelete ->
+                            reminders.removeAll { it.id == reminderToDelete.id }
+
+                            CoroutineScope(Dispatchers.IO).launch {
+                                reminderDao.deleteReminder(reminderToDelete.toEntity())
+                            }
+
+                            AlarmScheduler(this).cancelReminder(reminderToDelete.id)
                         }
                     )
                 }
@@ -88,15 +150,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ReminderFormScreen(
     exactAlarmAllowed: Boolean,
+    reminders: List<Reminder>,
     onRequestExactAlarmAccess: () -> Unit,
-    onScheduleReminder: (Reminder) -> Unit
+    onScheduleReminder: (Reminder) -> Unit,
+    onToggleReminder: (Reminder) -> Unit,
+    onDeleteReminder: (Reminder) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var intervalText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    val reminders = remember { mutableStateListOf<Reminder>() }
-    val context = LocalContext.current
 
     LazyColumn(
         modifier = Modifier
@@ -209,7 +272,6 @@ fun ReminderFormScreen(
                                 isEnabled = true
                             )
 
-                            reminders.add(reminder)
                             onScheduleReminder(reminder)
 
                             title = ""
@@ -240,22 +302,10 @@ fun ReminderFormScreen(
             ReminderItem(
                 reminder = reminder,
                 onToggleEnabled = { updatedReminder ->
-                    val index = reminders.indexOfFirst { it.id == updatedReminder.id }
-                    if (index != -1) {
-                        reminders[index] = updatedReminder
-
-                        val scheduler = AlarmScheduler(context)
-
-                        if (!updatedReminder.isEnabled) {
-                            scheduler.cancelReminder(updatedReminder.id)
-                        } else {
-                            scheduler.scheduleReminderAfterFiveSeconds(updatedReminder)
-                        }
-                    }
+                    onToggleReminder(updatedReminder)
                 },
                 onDelete = { reminderToDelete ->
-                    AlarmScheduler(context).cancelReminder(reminderToDelete.id)
-                    reminders.removeAll { it.id == reminderToDelete.id }
+                    onDeleteReminder(reminderToDelete)
                 }
             )
         }
